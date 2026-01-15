@@ -1,0 +1,7 @@
+linters:
+  enable:
+    - golint
+
+linters-settings:
+  golint:
+    min-confidence: 0 # отключает предупреждения о комментариях
