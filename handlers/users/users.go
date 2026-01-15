@@ -8,22 +8,20 @@ import (
 	"net/http"
 	"strconv"
 
-	DataBase "backend_golang/dataBase"
-	"backend_golang/methods"
-	"backend_golang/types"
+	"github.com/gin-gonic/gin"
 
-	_ "github.com/go-sql-driver/mysql"
+	"backend_golang/database"
+	"backend_golang/types"
 )
 
-func GetAll(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methods.SendJSONErrorResponse(w, "Только GET запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
-	}
-
-	rows, err := DataBase.DB.Query("SELECT id, name, surname, phone_number, balance FROM users ORDER BY id")
+func GetAll(c *gin.Context) {
+	rows, err := database.DB.Query("SELECT id, name, surname, phone_number, balance FROM users ORDER BY id")
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка базы данных: "+err.Error(), "DATABASE_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка базы данных: " + err.Error(),
+			Error:   "DATABASE_ERROR",
+		})
 		return
 	}
 	defer rows.Close()
@@ -33,40 +31,47 @@ func GetAll(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var user types.UserResponse
 		if err := rows.Scan(&user.ID, &user.Name, &user.Surname, &user.PhoneNumber, &user.Balance); err != nil {
-			methods.SendJSONErrorResponse(w, "Ошибка сканирования пользователя: "+err.Error(), "SCAN_ERROR", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, types.Response{
+				Success: false,
+				Message: "Ошибка сканирования пользователя: " + err.Error(),
+				Error:   "SCAN_ERROR",
+			})
 			return
 		}
 		users = append(users, user)
 	}
 
 	if len(users) == 0 {
-		methods.SendJSONSuccessResponseWithData(w, "Нет пользователей в базе данных", []types.UserResponse{}, http.StatusOK)
+		c.JSON(http.StatusOK, types.Response{
+			Success: true,
+			Message: "Нет пользователей в базе данных",
+			Data:    []types.UserResponse{},
+		})
 		return
 	}
 
-	methods.SendJSONSuccessResponseWithData(w, fmt.Sprintf("Найдено %d пользователей", len(users)), users, http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: fmt.Sprintf("Найдено %d пользователей", len(users)),
+		Data:    users,
+	})
 }
 
-func GetByID(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methods.SendJSONErrorResponse(w, "Только GET запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
-	}
-
-	idUser := r.URL.Query().Get("id")
-	if idUser == "" {
-		methods.SendJSONErrorResponse(w, "Параметр 'id' обязателен", "MISSING_FIELDS", http.StatusBadRequest)
-		return
-	}
+func GetByID(c *gin.Context) {
+	idUser := c.Param("id")
 
 	id, err := strconv.Atoi(idUser)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Неверный формат параметра 'id'", "INVALID_ID", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Неверный формат параметра 'id'",
+			Error:   "INVALID_ID",
+		})
 		return
 	}
 
 	var user types.UserResponse
-	err = DataBase.DB.QueryRow(
+	err = database.DB.QueryRow(
 		"SELECT id, name, surname, phone_number, balance FROM users WHERE id = ?",
 		id,
 	).Scan(
@@ -79,12 +84,24 @@ func GetByID(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			methods.SendJSONErrorResponse(w, "Пользователь не найден", "USER_NOT_FOUND", http.StatusNotFound)
+			c.JSON(http.StatusNotFound, types.Response{
+				Success: false,
+				Message: "Пользователь не найден",
+				Error:   "USER_NOT_FOUND",
+			})
 		} else {
-			methods.SendJSONErrorResponse(w, "Ошибка базы данных: "+err.Error(), "DATABASE_ERROR", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, types.Response{
+				Success: false,
+				Message: "Ошибка базы данных: " + err.Error(),
+				Error:   "DATABASE_ERROR",
+			})
 		}
 		return
 	}
 
-	methods.SendJSONSuccessResponseWithData(w, "Пользователь найден", user, http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: "Пользователь найден",
+		Data:    user,
+	})
 }

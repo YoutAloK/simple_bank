@@ -7,43 +7,49 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	DataBase "backend_golang/dataBase"
+	"backend_golang/database"
 	"backend_golang/methods"
 	"backend_golang/types"
 )
 
-func Register(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONError(w, "Только POST запросы", http.StatusMethodNotAllowed)
-		return
-	}
-
-	r.ParseForm()
-
-	name := r.FormValue("name")
-	surname := r.FormValue("surname")
-	phoneNumber := r.FormValue("phone_number")
-	password := r.FormValue("password")
-	balanceStr := r.FormValue("balance")
+func Register(c *gin.Context) {
+	name := c.PostForm("name")
+	surname := c.PostForm("surname")
+	phoneNumber := c.PostForm("phone_number")
+	password := c.PostForm("password")
+	balanceStr := c.PostForm("balance")
 
 	if name == "" || surname == "" || phoneNumber == "" || password == "" {
-		methods.SendJSONError(w, "Имя, фамилия, телефон и пароль обязательны", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Имя, фамилия, телефон и пароль обязательны",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
 	var existingID int64
-	err := DataBase.DB.QueryRow(
+	err := database.DB.QueryRow(
 		"SELECT id FROM users WHERE phone_number = ?",
 		phoneNumber,
 	).Scan(&existingID)
 
 	if err == nil {
-		methods.SendJSONError(w, "Пользователь с таким телефоном уже существует", http.StatusConflict)
+		c.JSON(http.StatusConflict, types.Response{
+			Success: false,
+			Message: "Пользователь с таким телефоном уже существует",
+			Error:   "USER_EXISTS",
+		})
 		return
 	} else if err != sql.ErrNoRows {
-		methods.SendJSONError(w, "Ошибка при проверке пользователя: "+err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при проверке пользователя: " + err.Error(),
+			Error:   "DATABASE_ERROR",
+		})
 		return
 	}
 
@@ -52,14 +58,22 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		if bal, err := strconv.ParseFloat(balanceStr, 64); err == nil && bal >= 0 {
 			balance = bal
 		} else {
-			methods.SendJSONError(w, "Неверный формат баланса", http.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, types.Response{
+				Success: false,
+				Message: "Неверный формат баланса",
+				Error:   "INVALID_BALANCE",
+			})
 			return
 		}
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), types.BcryptSalt)
 	if err != nil {
-		methods.SendJSONError(w, "Ошибка при хешировании пароля: "+err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при хешировании пароля: " + err.Error(),
+			Error:   "HASH_ERROR",
+		})
 		return
 	}
 
@@ -71,7 +85,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
         VALUES (?, ?, ?, ?, ?, ?)
     `
 
-	result, err := DataBase.DB.Exec(
+	result, err := database.DB.Exec(
 		query,
 		name,
 		surname,
@@ -82,52 +96,67 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		methods.SendJSONError(w, "Ошибка при регистрации пользователя: "+err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при регистрации пользователя: " + err.Error(),
+			Error:   "REGISTRATION_ERROR",
+		})
 		return
 	}
 
 	userID, err := result.LastInsertId()
 	if err != nil {
-		methods.SendJSONError(w, "Ошибка при получении ID пользователя: "+err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при получении ID пользователя: " + err.Error(),
+			Error:   "ID_ERROR",
+		})
 		return
 	}
 
-	methods.SendJSONResponse(w, types.ResponseForAuth{
+	c.JSON(http.StatusCreated, types.Response{
 		Success: true,
 		Message: "Пользователь успешно зарегистрирован",
-		UserID:  userID,
-		Session: session,
-		Balance: balance,
-	}, http.StatusCreated)
+		Data: map[string]interface{}{
+			"user_id": userID,
+			"session": session,
+			"balance": balance,
+		},
+	})
 }
 
-func Login(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONErrorResponse(w, "Только POST запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
-	}
-
-	r.ParseForm()
-
-	phoneNumber := r.FormValue("phone_number")
-	password := r.FormValue("password")
+func Login(c *gin.Context) {
+	phoneNumber := c.PostForm("phone_number")
+	password := c.PostForm("password")
 
 	if phoneNumber == "" || password == "" {
-		methods.SendJSONErrorResponse(w, "Телефон и пароль обязательны", "MISSING_FIELDS", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Телефон и пароль обязательны",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
 	var passwordHash string
-	err := DataBase.DB.QueryRow(
+	err := database.DB.QueryRow(
 		"SELECT password_hash FROM users WHERE phone_number = ?",
 		phoneNumber,
 	).Scan(&passwordHash)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			methods.SendJSONErrorResponse(w, "Пользователь не найден", "USER_NOT_FOUND", http.StatusNotFound)
+			c.JSON(http.StatusNotFound, types.Response{
+				Success: false,
+				Message: "Пользователь не найден",
+				Error:   "USER_NOT_FOUND",
+			})
 		} else {
-			methods.SendJSONErrorResponse(w, "Ошибка базы данных: "+err.Error(), "DATABASE_ERROR", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, types.Response{
+				Success: false,
+				Message: "Ошибка базы данных: " + err.Error(),
+				Error:   "DATABASE_ERROR",
+			})
 		}
 		return
 	}
@@ -135,9 +164,17 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
 	if err != nil {
 		if err == bcrypt.ErrMismatchedHashAndPassword {
-			methods.SendJSONErrorResponse(w, "Неправильный пароль", "INVALID_PASSWORD", http.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, types.Response{
+				Success: false,
+				Message: "Неправильный пароль",
+				Error:   "INVALID_PASSWORD",
+			})
 		} else {
-			methods.SendJSONErrorResponse(w, "Ошибка проверки пароля: "+err.Error(), "PASSWORD_CHECK_ERROR", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, types.Response{
+				Success: false,
+				Message: "Ошибка проверки пароля: " + err.Error(),
+				Error:   "PASSWORD_CHECK_ERROR",
+			})
 		}
 		return
 	}
@@ -146,190 +183,268 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	var balance float64
 	var name, surname, session string
 
-	err = DataBase.DB.QueryRow(
+	err = database.DB.QueryRow(
 		"SELECT id, name, surname, balance, session FROM users WHERE phone_number = ?",
 		phoneNumber,
 	).Scan(&userID, &name, &surname, &balance, &session)
 
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка при получении данных пользователя: "+err.Error(), "USER_DATA_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при получении данных пользователя: " + err.Error(),
+			Error:   "USER_DATA_ERROR",
+		})
 		return
 	}
 
 	if session == "" {
 		session = methods.GenerateSecureSession(32)
-		_, err = DataBase.DB.Exec(
+		_, err = database.DB.Exec(
 			"UPDATE users SET session = ? WHERE id = ?",
 			session, userID,
 		)
 		if err != nil {
-			methods.SendJSONErrorResponse(w, "Ошибка при создании сессии: "+err.Error(), "SESSION_CREATE_ERROR", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, types.Response{
+				Success: false,
+				Message: "Ошибка при создании сессии: " + err.Error(),
+				Error:   "SESSION_CREATE_ERROR",
+			})
 			return
 		}
 	}
 
-	userData := map[string]interface{}{
-		"user_id":      userID,
-		"name":         name,
-		"surname":      surname,
-		"phone_number": phoneNumber,
-		"balance":      balance,
-		"session":      session,
-	}
-
-	methods.SendJSONResponseGeneric(w, types.Response{
+	c.JSON(http.StatusOK, types.Response{
 		Success: true,
 		Message: "Успешный вход в систему",
-		Data:    userData,
-	}, http.StatusOK)
+		Data: map[string]interface{}{
+			"user_id":      userID,
+			"name":         name,
+			"surname":      surname,
+			"phone_number": phoneNumber,
+			"balance":      balance,
+			"session":      session,
+		},
+	})
 }
 
-func Logout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONErrorResponse(w, "Только POST запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
+func Logout(c *gin.Context) {
+	session := c.Query("session")
+	if session == "" {
+		session = c.GetHeader("Session")
 	}
-
-	r.ParseForm()
-
-	session := r.FormValue("session")
 
 	if session == "" {
-		methods.SendJSONErrorResponse(w, "Сессия обязательна", "MISSING_FIELDS", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Сессия обязательна",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
-	result, err := DataBase.DB.Exec("UPDATE users SET session = NULL WHERE session = ?", session)
+	result, err := database.DB.Exec("UPDATE users SET session = NULL WHERE session = ?", session)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Не удалось удалить сессию", "SESSION_DELETE_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Не удалось удалить сессию",
+			Error:   "SESSION_DELETE_ERROR",
+		})
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка при проверке результата", "RESULT_CHECK_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при проверке результата",
+			Error:   "RESULT_CHECK_ERROR",
+		})
 		return
 	}
 
 	if rowsAffected == 0 {
-		methods.SendJSONErrorResponse(w, "Пользователь с такой сессией не найден", "USER_NOT_FOUND", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, types.Response{
+			Success: false,
+			Message: "Пользователь с такой сессией не найден",
+			Error:   "USER_NOT_FOUND",
+		})
 		return
 	}
 
-	methods.SendJSONSuccessResponse(w, "Успешный выход из системы", http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: "Успешный выход из системы",
+	})
 }
 
-func RefreshSession(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONErrorResponse(w, "Только POST запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
+func RefreshSession(c *gin.Context) {
+	session := c.PostForm("session")
+	if session == "" {
+		var req struct {
+			Session string `json:"session"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			session = req.Session
+		}
 	}
 
-	r.ParseForm()
-
-	session := r.FormValue("session")
-
 	if session == "" {
-		methods.SendJSONErrorResponse(w, "Сессия обязательна", "MISSING_FIELDS", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Сессия обязательна",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
 	newSession := methods.GenerateSecureSession(types.DefaultSession)
 
-	result, err := DataBase.DB.Exec("UPDATE users SET session = ? WHERE session = ?", newSession, session)
+	result, err := database.DB.Exec("UPDATE users SET session = ? WHERE session = ?", newSession, session)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Не удалось изменить сессию", "SESSION_UPDATE_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Не удалось изменить сессию",
+			Error:   "SESSION_UPDATE_ERROR",
+		})
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка при проверке результата", "RESULT_CHECK_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при проверке результата",
+			Error:   "RESULT_CHECK_ERROR",
+		})
 		return
 	}
 
 	if rowsAffected == 0 {
-		methods.SendJSONErrorResponse(w, "Пользователь с такой сессией не найден", "USER_NOT_FOUND", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, types.Response{
+			Success: false,
+			Message: "Пользователь с такой сессией не найден",
+			Error:   "USER_NOT_FOUND",
+		})
 		return
 	}
 
-	methods.SendJSONSuccessResponseWithData(w, "Успешное обновление сессии", map[string]interface{}{
-		"session": newSession,
-	}, http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: "Успешное обновление сессии",
+		Data: map[string]interface{}{
+			"session": newSession,
+		},
+	})
 }
 
-func RefreshPassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONErrorResponse(w, "Только POST запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
-	}
-
-	r.ParseForm()
-
-	userID := r.FormValue("id")
-	password := r.FormValue("new_password")
+func RefreshPassword(c *gin.Context) {
+	userID := c.PostForm("id")
+	password := c.PostForm("new_password")
 
 	if userID == "" || password == "" {
-		methods.SendJSONErrorResponse(w, "Пароль и айди обязательны", "MISSING_FIELDS", http.StatusBadRequest)
+		var req struct {
+			ID       string `json:"id"`
+			Password string `json:"new_password"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			userID = req.ID
+			password = req.Password
+		}
+	}
+
+	if userID == "" || password == "" {
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Пароль и айди обязательны",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), types.BcryptSalt)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка при хешировании пароля", "HASH_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при хешировании пароля",
+			Error:   "HASH_ERROR",
+		})
 		return
 	}
 
-	result, err := DataBase.DB.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(passwordHash), userID)
+	result, err := database.DB.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(passwordHash), userID)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Не удалось сменить пароль", "PASSWORD_UPDATE_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Не удалось сменить пароль",
+			Error:   "PASSWORD_UPDATE_ERROR",
+		})
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка при проверке результата", "RESULT_CHECK_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка при проверке результата",
+			Error:   "RESULT_CHECK_ERROR",
+		})
 		return
 	}
 
 	if rowsAffected == 0 {
-		methods.SendJSONErrorResponse(w, "Пользователь с таким айди не найден", "USER_NOT_FOUND", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, types.Response{
+			Success: false,
+			Message: "Пользователь с таким айди не найден",
+			Error:   "USER_NOT_FOUND",
+		})
 		return
 	}
 
-	methods.SendJSONSuccessResponse(w, "Пароль успешно изменен", http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: "Пароль успешно изменен",
+	})
 }
 
-func GetBySession(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methods.SendJSONErrorResponse(w, "Только POST запросы", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
-		return
-	}
-
-	r.ParseForm()
-
-	session := r.FormValue("session")
+func GetBySession(c *gin.Context) {
+	session := c.Query("session")
 
 	if session == "" {
-		methods.SendJSONErrorResponse(w, "Сессия обязательна", "MISSING_FIELDS", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, types.Response{
+			Success: false,
+			Message: "Сессия обязательна",
+			Error:   "MISSING_FIELDS",
+		})
 		return
 	}
 
-	rows, err := DataBase.DB.Query("SELECT * FROM users WHERE session = ?", session)
+	rows, err := database.DB.Query("SELECT * FROM users WHERE session = ?", session)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка базы данных: "+err.Error(), "DATABASE_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка базы данных: " + err.Error(),
+			Error:   "DATABASE_ERROR",
+		})
 		return
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		methods.SendJSONErrorResponse(w, "Пользователь с такой сессией не найден", "USER_NOT_FOUND", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, types.Response{
+			Success: false,
+			Message: "Пользователь с такой сессией не найден",
+			Error:   "USER_NOT_FOUND",
+		})
 		return
 	}
 
 	columns, err := rows.Columns()
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка получения колонок: "+err.Error(), "COLUMNS_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка получения колонок: " + err.Error(),
+			Error:   "COLUMNS_ERROR",
+		})
 		return
 	}
 
@@ -341,7 +456,11 @@ func GetBySession(w http.ResponseWriter, r *http.Request) {
 
 	err = rows.Scan(valuePtrs...)
 	if err != nil {
-		methods.SendJSONErrorResponse(w, "Ошибка чтения данных: "+err.Error(), "SCAN_ERROR", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, types.Response{
+			Success: false,
+			Message: "Ошибка чтения данных: " + err.Error(),
+			Error:   "SCAN_ERROR",
+		})
 		return
 	}
 
@@ -358,5 +477,9 @@ func GetBySession(w http.ResponseWriter, r *http.Request) {
 		userData[col] = v
 	}
 
-	methods.SendJSONSuccessResponseWithData(w, "Пользователь найден по сессии", userData, http.StatusOK)
+	c.JSON(http.StatusOK, types.Response{
+		Success: true,
+		Message: "Пользователь найден по сессии",
+		Data:    userData,
+	})
 }

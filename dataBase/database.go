@@ -1,6 +1,5 @@
-// Package db used for database
-// connections
-package db
+// Package database used for database connections
+package database
 
 import (
 	"database/sql"
@@ -44,11 +43,12 @@ func init() {
 		log.Fatal("Error connecting to database:", err)
 	}
 
-	log.Println("Database connection established")
+	log.Println("✅ Database connection established")
 }
 
 func Close() {
 	if DB != nil {
 		DB.Close()
+		log.Println("📴 Database connection closed")
 	}
 }
