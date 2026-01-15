@@ -181,12 +181,13 @@ func Login(c *gin.Context) {
 
 	var userID int64
 	var balance float64
-	var name, surname, session string
+	var name, surname string
+	var sessionNullable sql.NullString 
 
 	err = database.DB.QueryRow(
 		"SELECT id, name, surname, balance, session FROM users WHERE phone_number = ?",
 		phoneNumber,
-	).Scan(&userID, &name, &surname, &balance, &session)
+	).Scan(&userID, &name, &surname, &balance, &sessionNullable)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, types.Response{
@@ -197,8 +198,11 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	if session == "" {
-		session = methods.GenerateSecureSession(32)
+	var session string
+	if sessionNullable.Valid {
+		session = sessionNullable.String
+	} else {
+		session = methods.GenerateSecureSession(types.DefaultSession)
 		_, err = database.DB.Exec(
 			"UPDATE users SET session = ? WHERE id = ?",
 			session, userID,
