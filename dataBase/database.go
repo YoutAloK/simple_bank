@@ -1,4 +1,4 @@
-// Package database used for database connections
+// Package database used for db connections
 package database
 
 import (

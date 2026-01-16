@@ -25,6 +25,8 @@ func main() {
 	{
 		usersGroup.GET("", users.GetAll)
 		usersGroup.GET("/:id", users.GetByID)
+		usersGroup.DELETE("/:id", users.UserDelete)
+		usersGroup.PUT("/:id", users.UpdateProfile)
 	}
 
 	fmt.Println("✅ Server started: http://localhost:8080")
@@ -33,6 +35,8 @@ func main() {
 	fmt.Println("\n  USERS  ")
 	fmt.Println("  GET    http://localhost:8080/users")
 	fmt.Println("  GET    http://localhost:8080/users/:id")
+	fmt.Println("  DELETE http://localhost:8080/users/:id")
+	fmt.Println("  PUT    http://localhost:8080/users/:id")
 
 	fmt.Println("\n  AUTH  ")
 	fmt.Println("  POST   http://localhost:8080/auth/register")
